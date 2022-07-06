@@ -8,10 +8,21 @@ import datetime
 from email import header
 from csv import writer
 import pandas as pd
+import numpy as np
+from email import message
+from datetime import date
+from datetime import timedelta
+from io import StringIO 
+import vonage
+import twilio
+from twilio.rest import Client
+import requests
 
 
+finalmsg = ""
 
-
+   
+   
 #Listing All regions to collect Instances
 def ec_details():
     collect_all_regions=['us-west-1', 'us-east-1',  'eu-west-1', 'eu-west-2', 'ap-southeast-2', 'af-south-1']
@@ -52,26 +63,28 @@ def ec_details():
     # print(df2)
     current_date = datetime.datetime.now()
     today = str(current_date.day)+str(current_date.month)+str(current_date.year)
-    filename = str(today) + str('_EC2.csv')
+    filenametmp = '/tmp/'+ str(today) + str('_EC2.csv')
     # print(filename)
-    df2.to_csv(str(filename))
-
+    df2.to_csv(str(filenametmp))
+    
     #Uploading to Bucket
     s3 = boto3.resource('s3')
     bucket = s3.Bucket('aws-audit-details-ushur')
-    bucket.upload_file(str(filename), '%s/%s' %(today,filename))
+    todayProd = today + "_Prod"
+    filename = str(today) + str('_EC2.csv')
+    bucket.upload_file(str(filenametmp), '%s/%s' %(todayProd,filename),)
 
 
 
 def alb_info():
     region_name = ['us-west-1', 'us-east-1',  'eu-west-1', 'eu-west-2', 'ap-southeast-2', 'af-south-1']
-    headersCSV = ['ALB ','Target Groups']
+    headersCSV = ['ALB ','Target Groups','DNSName']
 
     current_date = datetime.datetime.now()
     today = str(current_date.day)+str(current_date.month)+str(current_date.year)
-    filename = str(today) + str('_ALB.csv')
+    filenametmp = '/tmp/' + str(today) + str('_ALB.csv')
 
-    with open(filename, 'w') as file:
+    with open(filenametmp, 'w') as file:
         dw = csv.DictWriter(file, delimiter=',',fieldnames=headersCSV)
         dw.writeheader()
 
@@ -128,9 +141,10 @@ def alb_info():
             list = []
             list.append(lb["LoadBalancerName"])
             list.append(str(gettargetgroups(lb["LoadBalancerArn"])))
+            list.append(lb["DNSName"])
             # for tgs in gettargetgrouparns(lb["LoadBalancerArn"]):
             #     gettargethealth(tgs)
-            with open(filename, 'a', newline='') as f_object:
+            with open(filenametmp, 'a', newline='') as f_object:
                 writer_object = writer(f_object)
                 writer_object.writerow(list)  
                 f_object.close()
@@ -138,18 +152,390 @@ def alb_info():
     #Uploading to S3 bucket
     s3 = boto3.resource('s3')
     bucket = s3.Bucket('aws-audit-details-ushur')
-    key = str(filename) + str('_ALB.csv')
-    bucket.upload_file(str(filename), '%s/%s' %(today,filename))
+    todayProd = today + "_Prod"
+    filename = str(today) + str('_ALB.csv')
+    bucket.upload_file(str(filenametmp), '%s/%s' %(todayProd,filename),)
+
+def SecurityGroups():
+    
+    headersCSV = ['Security Group ID ','IP Permissions','IP permissions Egress']
+    
+    current_date = datetime.datetime.now()
+    today = str(current_date.day)+str(current_date.month)+str(current_date.year)
+    filenametmp = '/tmp/' + str(today) + str('_SecurityGroups.csv')
+    
+    
+    with open(filenametmp, 'w') as file:
+           dw = csv.DictWriter(file, delimiter=',',fieldnames=headersCSV)
+           dw.writeheader()
+    
+    #Listing All regions to collect Instances
+    collect_all_regions =['us-west-1', 'us-east-1',  'eu-west-1', 'eu-west-2', 'ap-southeast-2', 'af-south-1']
+    # Connect to EC2
+    for each_region in collect_all_regions:
+            ec2 = boto3.client(service_name='ec2',region_name=each_region)
+            response=ec2.describe_security_groups()
+            security_groups = response['SecurityGroups']
+            for group_object in security_groups:
+                list = []
+                list.append(group_object["GroupId"])
+                list.append(group_object["IpPermissions"])
+                list.append(group_object["IpPermissionsEgress"])
+    
+                with open(filenametmp, 'a', newline='') as f_object:
+                    writer_object = writer(f_object)
+                    writer_object.writerow(list)  
+                    f_object.close()
+                    
+                    
+    s3 = boto3.resource('s3')
+    bucket = s3.Bucket('aws-audit-details-ushur')
+    todayProd = today + "_Prod"
+    filename = str(today) + str('_SecurityGroups.csv')
+    bucket.upload_file(str(filenametmp), '%s/%s' %(todayProd,filename),)                
+                    
+def route53():
+    client = boto3.client('route53')
+    headersCSV = ['Name ','Type','DNSName']
+    current_date = datetime.datetime.now()
+    today = str(current_date.day)+str(current_date.month)+str(current_date.year)
+   
+    filenametmp = '/tmp/' + str(today)+ str('_Route53.csv')
+    
+    with open(filenametmp, 'w') as file:
+           dw = csv.DictWriter(file, delimiter=',',fieldnames=headersCSV)
+           dw.writeheader()
+    
+    
+    paginator = client.get_paginator('list_resource_record_sets')
+    
+    try:
+        HostedZoneId = os.environ['HostedZoneId']
+        source_zone_records = paginator.paginate(HostedZoneId=HostedZoneId)
+        for record_set in source_zone_records:
+            for record in record_set['ResourceRecordSets']:
+    
+                    if 'AliasTarget' in record:
+                        # print (record['Name']+','+record['Type']+','+record['AliasTarget']['DNSName'])
+                        list = []
+                        list.append(record["Name"])
+                        list.append(record["Type"])
+                        list.append(record['AliasTarget']['DNSName'])
+                        with open(filenametmp, 'a', newline='') as f_object:
+                            writer_object = writer(f_object)
+                            writer_object.writerow(list)  
+                            f_object.close()
+    
+                    else:
+                        records=[]
+                        for ip in record['ResourceRecords']:
+                            records.append(ip['Value'])
+                        t = ','.join(records)
+                        # print(records)
+    
+                        list = []
+                        list.append(record["Name"])
+                        list.append(record["Type"])
+                        list.append(t)
+    
+                        with open(filenametmp, 'a', newline='') as f_object:
+                            writer_object = writer(f_object)
+                            writer_object.writerow(list)  
+                            f_object.close()
+    
+                        # print (record['Name']+','+record['Type']+','+','.join(records))
+    
+    except Exception as error:
+    	print(record)
+    	print ('An error occured getting source zone records '+ str(error))
+    	exit(1)
+    
+    df = pd.read_csv(filenametmp)
+    df.sort_values(["Type"],axis=0,ascending=[True],inplace=True)
+    df.reset_index(drop=True, inplace=True)
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+    df.to_csv(str(filenametmp))
+    
+    
+    # s3 = boto3.resource('s3')
+    # bucket_name = 'aws-audit-details-ushur'
+    # s3_object_name = str(today)+ str('_Route53.csv')
+    # s3.Object(bucket_name, s3_object_name).put(Body=csv_buffer.getvalue())
+    
+    
+    # bucket = s3.Bucket('aws-audit-details-ushur')
+    # today = today+ "_Prod"
+    # bucket.upload_file(str(filename), '%s/%s' %(today,filename))
+    
+    s3 = boto3.resource('s3')
+    bucket = s3.Bucket('aws-audit-details-ushur')
+    todayProd = today + "_Prod"
+    filename = str(today) + str('_Route53.csv')
+    bucket.upload_file(str(filenametmp), '%s/%s' %(todayProd,filename),)
+
+
+
+def difference():
+    
+    global finalmsg
+    
+    s3 = boto3.client('s3')
+    bucket = 'aws-audit-details-ushur'
+    
+    today = date.today()
+    yesterday = today - timedelta(days = 1)
+    today = str(today.day)+str(today.month)+str(today.year)
+    
+    yesterday = str(yesterday.day)+str(yesterday.month)+str(yesterday.year)
+    
+    
+    todayfile = str(today)+ str('_EC2.csv')
+    yesterdayfile = str(yesterday) + str('_EC2.csv')
+    
+    today = today + "_Prod"
+    yesterday = yesterday + "_Prod"
+    path1 = today + "/" + todayfile
+    path2 = yesterday + "/" + yesterdayfile
+    obj1 = s3.get_object(Bucket=bucket, Key=path1)
+    obj2 = s3.get_object(Bucket=bucket, Key=path2)
+    
+    df1 = pd.read_csv(obj1['Body']) 
+    df2 = pd.read_csv(obj2['Body']) 
+    
+    #df2 = pd.read_csv ('1362022_EC2.csv',index_col=[0])
+    #df2 = pd.read_csv (todayfile,index_col=[0])
+    
+    old = list(df1['Id'])
+    new = list(df2['Id'])
+    
+    # print(list1)
+    # old = dict(list1) 
+    # new = dict(list2)
+    
+    # removed = {k:old[k] for k in old.keys() - new.keys()}
+    # added = {k:new[k] for k in new.keys() - old.keys()}
+    
+    def compare_list(old, new):
+        new_set = set(new)
+        old_set = set(old)
+        return new_set - old_set, old_set - new_set, new_set & old_set
+    
+    
+    added, deleted, unchanged = compare_list(old, new)
+    
+    ListAdded = list(added)
+    ListDeleted = list(deleted)
+    
+    cnt1 = 0
+    cnt2 = 0
+    if(len(added)==0):
+        # print("No New Instance Added \n")
+        msg1 = "No New Instance Added \n"
+    
+    else:
+        # print("Total Number of Instance Added: ",len(added),"Instance added: ", ListAdded)
+        msg1 = "Total Number of Instance Added:"+str(len(added)) + "\n"+"Instance added:" +"\n"
+        for i in added:
+            cnt1+=1
+            msg1 += str(cnt1) +". Instance ID: " + str(i)
+            a = df2.loc[df2['Id'] == i, 'Name'].item()
+            msg1 +=" ," +"Instance Name: " +str(a) + "\n"
+            
+        # print(msg1)
+    
+    # print('\n')
+    msg2 = ""
+    if(len(deleted)==0):
+        # print("No Instance was Deleted")
+        msg2 += "No Instance was Deleted"
+    
+    else:
+        
+        # print("Total Number of Instance Deleted: ",len(deleted),"Instance Deleted: ", ListDeleted)
+        msg2 += "Total Number of Instance Deleted:" +str(len(deleted))+ "\n"+ "Instance Deleted:" +"\n"
+    
+        for i in deleted:
+            cnt2+=1
+            msg2 += str(cnt2) +". Instance ID: " + str(i)
+            b = df1.loc[df1['Id'] == i, 'Name'].item()
+            msg2 += " ," +"Instance Name: " +str(b) + "\n"
+        
+        # print(msg2)
+    
+    df3 =pd.merge(df2, df1, on='Id')
+    df3['diff'] = np.where(df3['Type_x'] == df3['Type_y'] , '0', '1')
+    df3.to_csv("/tmp/merged.csv")
+    
+    df4 = pd.read_csv("/tmp/merged.csv")
+    df4.reset_index(drop=True, inplace=True)
+    df4 = df4.loc[:, ~df4.columns.str.contains('^Unnamed')]
+    df5 = df4.filter(['Id','Name_x','Type_x','Type_y','diff'],axis=1)
+    df6 = df5.loc[df5['diff'] == 1]
+    
+    typechange = "\nInstances Changed : \n"
+    cnt = 0
+    if not(df6.empty):
+        for index, row in df6.iterrows():
+            cnt+=1
+            typechange += str(cnt)+ ". Instance Id: " + row['Id']  + ",Instance Name: " + row['Name_x']  + "\n Type changed: " + row['Type_x'] + " → " + row['Type_y']
+            typechange += "\n"
+    
+    else:
+        typechange += "No instances were changed"
+    
+    # print(typechange)
+    sns = boto3.client('sns',region_name="us-east-1")
+    msg = msg1+ "\n " + msg2
+    # finalmsg =  "EC2 Instance Changes are: " + "\n"
+    finalmsg += "------------------------------------------------------------------------------------------------------------------"
+    finalmsg += "\n"
+    finalmsg += "𝐏𝐫𝐨𝐝 𝐀𝐜𝐜𝐨𝐮𝐧𝐭: \n"
+
+    finalmsg += msg
+    finalmsg += "\n"
+    finalmsg += typechange
+    
+
 
 
     
+def costreport():
+    
+    global finalmsg
+    billing_client = boto3.client('ce')
+    today = date.today()
+    # print(today)
+    yesterday = today - timedelta(days = 1)
+    yesterday2 = today - timedelta(days = 2)
+    yesterday3 = today - timedelta(days = 3)
+    
+    str_today = str(today) 
+    str_yesterday = str(yesterday)
+    str_yesterday2 = str(yesterday2)
+    str_yesterday3 = str(yesterday3)
+    
+    # connecting to cost explorer to get daily aws usage 
+    response = billing_client.get_cost_and_usage( 
+       TimePeriod={ 
+         'Start': str_yesterday3, 
+         'End': str_yesterday2 }, 
+       Granularity='DAILY', 
+       Metrics=[ 'BlendedCost',] 
+    )
+    
+    for r in response['ResultsByTime']:
+            # print(response['ResultsByTime'])
+            str_amount=(r['Total']['BlendedCost']['Amount'])
+            # print(str_amount)
+    
+    response1 = billing_client.get_cost_and_usage( 
+       TimePeriod={ 
+         'Start': str_yesterday2, 
+         'End': str_yesterday }, 
+       Granularity='DAILY', 
+       Metrics=[ 'BlendedCost',] 
+    )
+    
+    for r in response1['ResultsByTime']:
+            # print(response1['ResultsByTime'])
+            str_amount1=(r['Total']['BlendedCost']['Amount'])
+            # print(str_amount1)
+    
+    
+    response2 = billing_client.get_cost_and_usage( 
+       TimePeriod={ 
+         'Start': str_yesterday, 
+         'End': str_today }, 
+       Granularity='DAILY', 
+       Metrics=[ 'BlendedCost',] 
+    )
+    
+    for r in response2['ResultsByTime']:
+            # print(response2['ResultsByTime'])
+            str_amount2=(r['Total']['BlendedCost']['Amount'])
+            # print(str_amount2)
+    
+    
+    # response2 = billing_client.get_cost_and_usage( 
+    #    TimePeriod={ 
+    #      'Start': str_yesterday3, 
+    #      'End': str_today }, 
+    #    Granularity='DAILY', 
+    #    Metrics=[ 'BlendedCost',] 
+    # )
+    
+    # for r in response['ResultsByTime']:
+    #         print(response2['ResultsByTime'])
+    #         str_amount3=(r['Total']['BlendedCost']['Amount'])
+            # print(str_amount3)
+        
+    
+    amount = float(str_amount)
+    amount1 = float(str_amount1)
+    amount2 = float(str_amount2)
+    
+    
+    totalamount = amount + amount1 + amount2
+    
+    sns = boto3.client('sns',region_name="us-east-1")
+    msg = "𝑻𝒐𝒕𝒂𝒍 𝑩𝒍𝒆𝒏𝒅𝒆𝒅 𝒄𝒐𝒔𝒕 𝒑𝒂𝒔𝒕 3 𝒅𝒂𝒚𝒔: " + "\n"
+    msg += "\n The total Blended cost on " + str_yesterday3 + " = " +str(amount) + "\n" 
+    msg += "The total Blended cost on " + str_yesterday2 + " = " +str(amount1) + "\n"
+    msg += "The total Blended cost on " + str_yesterday + " = " +str(amount2) + "\n"
+    
+    today = str(today.day)+str(today.month)+str(today.year)
+    today = today + "_Prod"
+    msg += "\n \n 𝑻𝒉𝒆 𝒓𝒆𝒑𝒐𝒓𝒕𝒔 𝒂𝒓𝒆 𝒂𝒗𝒂𝒊𝒍𝒂𝒃𝒍𝒆 𝒂𝒕: \n " + "s3://aws-audit-details-ushur/" + str(today) + "/"
+    finalmsg += '\n' + msg +'\n \n'
+    
+    # print(finalmsg)
+    # response = sns.publish(TopicArn='arn:aws:sns:us-east-1:431171615733:AuditNotification', Message=finalmsg)
+
+def twilio_balance():
+    global finalmsg
+    account_sid = os.environ['twilio_account_sid']
+    auth_token = os.environ['twilio_auth_token']
+    twilio_client = Client(account_sid, auth_token)
+    
+    finalmsg +="𝐓𝐰𝐢𝐥𝐢𝐨 𝐀𝐜𝐜𝐨𝐮𝐧𝐭 𝐁𝐚𝐥𝐚𝐧𝐜𝐞 𝐢𝐬 : "
+    balancemsg = str(twilio_client.api.v2010.balance.fetch().balance)
+    finalmsg += balancemsg
+    finalmsg += " USD"
+    finalmsg +='\n'
+    
+    
+def nexmo_balance():
+    global finalmsg
+    key = os.environ['nexmo_key']
+    secret = os.environ['nexmo_secret']
+    nexmo = vonage.Client(key, secret)
+    res_nexmo = nexmo.account.get_balance()
+    finalmsg += "𝐍𝐞𝐱𝐦𝐨 𝐀𝐜𝐜𝐨𝐮𝐧𝐭 𝐁𝐚𝐥𝐚𝐧𝐜𝐞 𝐢𝐬 : " + str(res_nexmo['value']) + " EUR" + "\n"
+    
+    
+def send_slack_message(slack_webhook_url, slack_message):
+    
+  slack_payload = {'text': slack_message}
+  response = requests.post(slack_webhook_url, json.dumps(slack_payload))
+
+  
+  
 def lambda_handler(event, context):
-    
     ec_details()
     alb_info()
+    SecurityGroups()
+    global finalmsg
+    difference()
+    costreport()
+    route53()
+    nexmo_balance()
+    twilio_balance()
+    finalmsg += "------------------------------------------------------------------------------------------------------------------"
+    finalmsg += "\n"
+    URL = os.environ['URL']
+    print(finalmsg)
+    send_slack_message(URL,finalmsg)
     return {
         'statusCode': 200,
         'body': json.dumps('Hello from Lambda!') 
     }
-
-
