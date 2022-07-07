@@ -1,12 +1,6 @@
 # Aws-Audit-Details-Ushur
 
-The function overview is as follows:
-<p align="center"><p align="center">
-  <img src="https://user-images.githubusercontent.com/105628050/177704344-f6d26c69-3c73-4f23-8bd6-1f1006a23afd.png" />
-</p>
   
-
-
 The lambda script consists of various functions which are broken down as follows: 
 
 
