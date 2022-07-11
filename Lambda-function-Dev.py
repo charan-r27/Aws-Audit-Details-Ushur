@@ -306,8 +306,8 @@ def difference():
     obj1 = s3.get_object(Bucket=bucket, Key=path1)
     obj2 = s3.get_object(Bucket=bucket, Key=path2)
     
-    df1 = pd.read_csv(obj1['Body']) 
-    df2 = pd.read_csv(obj2['Body']) 
+    df2 = pd.read_csv(obj1['Body']) 
+    df1 = pd.read_csv(obj2['Body']) 
     
     #df2 = pd.read_csv ('1362022_EC2.csv',index_col=[0])
     #df2 = pd.read_csv (todayfile,index_col=[0])
